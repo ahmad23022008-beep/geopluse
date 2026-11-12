@@ -1,0 +1,35 @@
+{
+  "name": "geopulse-attendance-api",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "npm run prisma:generate && tsx watch src/server.ts",
+    "build": "npm run prisma:generate && tsc -p tsconfig.json",
+    "start": "node dist/server.js",
+    "test": "npm run prisma:generate && tsx --test src/tests/api.test.ts",
+    "typecheck": "npm run prisma:generate && tsc --noEmit -p tsconfig.json",
+    "prisma:generate": "prisma generate --schema ../prisma/schema.prisma"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.19.3",
+    "@supabase/supabase-js": "^2.117.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "express-rate-limit": "^7.5.0",
+    "file-type": "^20.5.0",
+    "helmet": "^8.0.0",
+    "multer": "^2.5.0",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.17",
+    "@types/express": "^5.0.0",
+    "@types/multer": "^2.3.0",
+    "@types/node": "^22.13.10",
+    "prisma": "^6.19.3",
+    "tsx": "^4.19.3",
+    "typescript": "^5.5.4"
+  }
+}
