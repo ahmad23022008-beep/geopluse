@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   AlertTriangle,
-  Building,
   CheckCircle2,
   Fingerprint,
   LoaderCircle,
@@ -21,8 +20,6 @@ import type {
   AttendanceLocationPayload,
   VerifiedAttendanceDB,
 } from '../services/attendanceService';
-import { verifyGeofence } from '../services/geofenceService';
-import { getActiveWorkLocation, type WorkLocation } from '../services/workLocationService';
 
 interface VerifyGpsPageProps {
   onConfirmAttendance: (
@@ -32,6 +29,7 @@ interface VerifyGpsPageProps {
   ) => Promise<VerifiedAttendanceDB>;
   attendanceType: 'masuk' | 'pulang';
   canSubmit: boolean;
+  attendanceUnavailableReason: string | null;
 }
 
 function formatTimestamp(timestamp: number | null): string {
@@ -46,11 +44,9 @@ export const VerifyGpsPage: React.FC<VerifyGpsPageProps> = ({
   onConfirmAttendance,
   attendanceType,
   canSubmit,
+  attendanceUnavailableReason,
 }) => {
   const { startWatching, stopWatching, refreshLocation, ...gps } = useGeolocation();
-  const [office, setOffice] = useState<WorkLocation | null>(null);
-  const [officeLoading, setOfficeLoading] = useState(true);
-  const [officeError, setOfficeError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const submissionInProgressRef = useRef(false);
   const [submissionMessage, setSubmissionMessage] = useState<string | null>(null);
@@ -60,36 +56,27 @@ export const VerifyGpsPage: React.FC<VerifyGpsPageProps> = ({
 
   useEffect(() => {
     startWatching();
-    let mounted = true;
-
-    void getActiveWorkLocation()
-      .then((activeOffice) => {
-        if (!mounted) return;
-        setOffice(activeOffice);
-        setOfficeError(null);
-      })
-      .catch((error: unknown) => {
-        if (!mounted) return;
-        setOffice(null);
-        setOfficeError(
-          error instanceof Error ? error.message : 'Gagal mengambil lokasi kantor dari server.'
-        );
-      })
-      .finally(() => {
-        if (mounted) setOfficeLoading(false);
-      });
-
-    return () => {
-      mounted = false;
-    };
   }, [startWatching]);
 
-  const geofence = verifyGeofence(gps, office);
-  const isReady = canSubmit && geofence.status === 'inside' && !isSubmitting;
+  const isGpsReady =
+    gps.latitude !== null &&
+    Number.isFinite(gps.latitude) &&
+    gps.latitude >= -90 &&
+    gps.latitude <= 90 &&
+    gps.longitude !== null &&
+    Number.isFinite(gps.longitude) &&
+    gps.longitude >= -180 &&
+    gps.longitude <= 180 &&
+    gps.accuracy !== null &&
+    Number.isFinite(gps.accuracy) &&
+    gps.accuracy > 0 &&
+    gps.timestamp !== null &&
+    Number.isFinite(gps.timestamp) &&
+    !gps.error;
+  const isReady = canSubmit && isGpsReady && !isSubmitting;
 
   const handleOpenCamera = () => {
-    if (!isReady || submissionInProgressRef.current || !office || gps.latitude === null || gps.longitude === null ||
-      gps.accuracy === null || gps.timestamp === null) return;
+    if (!isReady || submissionInProgressRef.current) return;
 
     setSubmissionError(null);
     setSubmissionMessage(null);
@@ -98,12 +85,9 @@ export const VerifyGpsPage: React.FC<VerifyGpsPageProps> = ({
   };
 
   const handleConfirmAttendance = async (photo: Blob) => {
-    const currentGeofence = verifyGeofence(gps, office);
     if (
       !isReady ||
       submissionInProgressRef.current ||
-      !office ||
-      currentGeofence.status !== 'inside' ||
       gps.latitude === null ||
       gps.longitude === null ||
       gps.accuracy === null ||
@@ -126,7 +110,6 @@ export const VerifyGpsPage: React.FC<VerifyGpsPageProps> = ({
         longitude: gps.longitude,
         accuracy: gps.accuracy,
         timestamp: new Date(gps.timestamp).toISOString(),
-        workLocationId: office.id,
       }, photo);
 
       if (attendance.verification_status !== 'verified') {
@@ -162,14 +145,13 @@ export const VerifyGpsPage: React.FC<VerifyGpsPageProps> = ({
       : 'Mencari sinyal GPS...'
     : 'Menunggu sinyal GPS...';
 
-  const statusIcon =
-    geofence.status === 'inside' ? (
-      <CheckCircle2 className="w-5 h-5 text-tertiary-fixed" />
-    ) : geofence.status === 'outside' || geofence.status === 'invalid_location' ? (
-      <AlertTriangle className="w-5 h-5 text-red-400" />
-    ) : (
-      <Radio className="w-5 h-5 text-yellow-400" />
-    );
+  const statusIcon = isGpsReady ? (
+    <CheckCircle2 className="w-5 h-5 text-tertiary-fixed" />
+  ) : gps.error ? (
+    <AlertTriangle className="w-5 h-5 text-red-400" />
+  ) : (
+    <Radio className="w-5 h-5 text-yellow-400" />
+  );
 
   return (
     <div className="flex flex-col gap-4 max-w-4xl mx-auto w-full pb-8">
@@ -178,7 +160,7 @@ export const VerifyGpsPage: React.FC<VerifyGpsPageProps> = ({
           <div className="flex items-center gap-1.5 bg-surface-container-high px-3 py-1 rounded-full">
             <ShieldCheck className="w-4 h-4 text-primary" />
             <span className="font-mono text-xs text-on-surface-variant font-medium">
-              VERIFIKASI LOKASI PERANGKAT
+              BUKTI LOKASI GPS
             </span>
           </div>
           <span className="font-mono text-xs text-on-surface-variant font-medium">
@@ -186,26 +168,15 @@ export const VerifyGpsPage: React.FC<VerifyGpsPageProps> = ({
           </span>
         </div>
         <h1 className="text-xl sm:text-2xl font-bold text-on-surface mt-1">
-          Verifikasi Lokasi & GPS
+          Lokasi GPS & Kehadiran
         </h1>
         <p className="text-xs sm:text-sm text-on-surface-variant leading-relaxed">
-          Check-in hanya dapat dikirim setelah lokasi aktual dan geofence terverifikasi.
+          Presensi dapat dilakukan dari lokasi mana pun. GPS dan selfie dicatat sebagai bukti kehadiran.
         </p>
       </div>
 
       <section className="relative w-full min-h-72 sm:min-h-80 rounded-2xl overflow-hidden bg-[#161a33] shadow-card border border-structural-border flex items-center justify-center p-6">
         <div className="absolute inset-0 bg-[radial-gradient(#3a4efb_1px,transparent_1px)] [background-size:20px_20px] opacity-20" />
-        <div className="absolute top-3 left-3 right-3 flex items-center justify-between gap-2 z-10">
-          <div className="flex items-center gap-1.5 bg-[#1e2238]/90 px-3 py-1.5 rounded-full border border-[#353c63] min-w-0">
-            <Building className="w-4 h-4 text-primary shrink-0" />
-            <span className="text-xs text-white font-semibold truncate">
-              {officeLoading ? 'Memuat lokasi kantor...' : office?.name ?? 'Kantor belum tersedia'}
-            </span>
-          </div>
-          <span className="font-mono text-xs text-white bg-[#1e2238]/90 px-3 py-1.5 rounded-full border border-[#353c63] shrink-0">
-            {office?.radiusMeters ? `${office.radiusMeters}m radius` : 'Radius belum tersedia'}
-          </span>
-        </div>
 
         <div className="relative z-10 flex max-w-lg flex-col items-center text-center text-white">
           <div className="mb-3 flex h-16 w-16 items-center justify-center rounded-full border border-[#59618e] bg-[#252b4d]">
@@ -231,7 +202,7 @@ export const VerifyGpsPage: React.FC<VerifyGpsPageProps> = ({
               Akurasi: {gps.accuracy !== null ? `±${Math.round(gps.accuracy)} m` : 'Belum tersedia'}
             </span>
             <span className="rounded-full border border-[#59618e] bg-[#1e2238]/90 px-3 py-1.5">
-              {officeLoading ? 'Memeriksa geofence...' : geofence.message}
+              {isGpsReady ? 'GPS siap untuk presensi' : 'Menunggu data GPS yang valid'}
             </span>
           </div>
           {(gps.error || gps.permissionStatus === 'denied') && (
@@ -241,7 +212,6 @@ export const VerifyGpsPage: React.FC<VerifyGpsPageProps> = ({
                 ' Setelah izin diubah, tekan Coba Lagi untuk memeriksa kembali.'}
             </p>
           )}
-          {officeError && <p className="mt-3 text-xs text-red-200">{officeError}</p>}
         </div>
 
         <button
@@ -280,11 +250,9 @@ export const VerifyGpsPage: React.FC<VerifyGpsPageProps> = ({
           </div>
           <div className="bg-surface-container-low p-3 rounded-xl flex flex-col items-center justify-center">
             {statusIcon}
-            <span className="text-[11px] text-on-surface-variant">Jarak ke kantor</span>
+            <span className="text-[11px] text-on-surface-variant">Status GPS</span>
             <span className="text-xs font-bold text-on-surface font-mono">
-              {geofence.distanceMeters !== null
-                ? `${Math.round(geofence.distanceMeters)} m`
-                : 'Belum tersedia'}
+              {isGpsReady ? 'Siap' : 'Belum siap'}
             </span>
           </div>
         </div>
@@ -296,12 +264,10 @@ export const VerifyGpsPage: React.FC<VerifyGpsPageProps> = ({
         </div>
       </section>
 
-      {geofence.status === 'inside' && (
-        <div className="flex items-start gap-2 rounded-xl border border-green-200 bg-green-50 p-3 text-xs text-green-800">
-          <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
-          <span>Lokasi terdeteksi di dalam geofence. Persetujuan absensi tetap menunggu verifikasi backend.</span>
-        </div>
-      )}
+      <div className="flex items-start gap-2 rounded-xl border border-blue-200 bg-blue-50 p-3 text-xs text-blue-900">
+        <MapPin className="mt-0.5 h-4 w-4 shrink-0" />
+        <span>Lokasi GPS dicatat untuk pemantauan. Tidak ada batas radius kantor untuk check-in atau check-out.</span>
+      </div>
       {submissionMessage && (
         <div className="flex items-start gap-2 rounded-xl border border-green-200 bg-green-50 p-3 text-sm text-green-800" role="status">
           <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
@@ -314,11 +280,13 @@ export const VerifyGpsPage: React.FC<VerifyGpsPageProps> = ({
           <span>{submissionError}</span>
         </div>
       )}
-
-      {geofence.status === 'accuracy_config_missing' && (
-        <div className="flex items-start gap-2 rounded-xl border border-yellow-200 bg-yellow-50 p-3 text-xs text-yellow-900">
+      {attendanceUnavailableReason && (
+        <div
+          className="flex items-start gap-2 rounded-xl border border-yellow-200 bg-yellow-50 p-3 text-sm text-yellow-900"
+          role="alert"
+        >
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-          <span>Batas akurasi belum tersedia di konfigurasi backend; presensi dinonaktifkan sampai backend menetapkannya.</span>
+          <span>{attendanceUnavailableReason}</span>
         </div>
       )}
 
@@ -342,7 +310,7 @@ export const VerifyGpsPage: React.FC<VerifyGpsPageProps> = ({
 
       <div className="flex items-center justify-center gap-1 text-[11px] text-on-surface-variant font-mono">
         <Lock className="w-3 h-3" />
-        <span>Lokasi terdeteksi bukan persetujuan absensi.</span>
+        <span>Foto dan data GPS dikirim untuk verifikasi kehadiran.</span>
       </div>
       <SelfieCameraModal
         isOpen={isCameraOpen}

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import confetti from 'canvas-confetti';
-import { Fingerprint, CheckCircle2, ShieldCheck, X, AlertCircle } from 'lucide-react';
+import { Fingerprint, CheckCircle2, ShieldCheck, X } from 'lucide-react';
 
 interface BiometricModalProps {
   isOpen: boolean;

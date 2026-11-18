@@ -15,24 +15,26 @@ import {
   Download,
   ChevronDown,
   CheckCircle2,
-  AlertTriangle,
-  FileCheck,
 } from 'lucide-react';
 
 interface HistoryPageProps {
   records: AttendanceRecord[];
+  isLoading: boolean;
+  loadError: string | null;
   onOpenMapDetail: (record: AttendanceRecord) => void;
   onExportReport: () => void;
 }
 
 export const HistoryPage: React.FC<HistoryPageProps> = ({
   records,
+  isLoading,
+  loadError,
   onOpenMapDetail,
   onExportReport,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [filterSegment, setFilterSegment] = useState<'all' | 'tepat_waktu' | 'terlambat' | 'izin_sakit'>('all');
-  const [selectedMonth, setSelectedMonth] = useState('Oktober 2024');
+  const selectedMonth = 'Oktober 2024';
   const [isAdmin, setIsAdmin] = useState(false);
   const [adminEvidence, setAdminEvidence] = useState<AttendancePhotoEvidence[]>([]);
   const [adminEvidenceLoading, setAdminEvidenceLoading] = useState(false);
@@ -111,6 +113,12 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
           </button>
         </div>
       </div>
+
+      {loadError && (
+        <p className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700" role="alert">
+          Riwayat absensi tidak dapat dimuat: {loadError}
+        </p>
+      )}
 
       {/* Monthly Metric Cards Grid */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
@@ -252,7 +260,11 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
       <div className="flex flex-col gap-3">
         {filteredRecords.length === 0 ? (
           <div className="bg-surface-container-lowest p-8 rounded-2xl text-center text-xs text-on-surface-variant border border-structural-border">
-            Tidak ada catatan presensi yang sesuai dengan kriteria pencarian.
+            {isLoading && records.length === 0
+              ? 'Memuat riwayat presensi...'
+              : loadError && records.length === 0
+              ? 'Riwayat presensi belum tersedia.'
+              : 'Tidak ada catatan presensi yang sesuai dengan kriteria pencarian.'}
           </div>
         ) : (
           filteredRecords.map((rec) => (
@@ -314,6 +326,45 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
                       {rec.checkOutLocation || '-'}
                     </span>
                   </div>
+                </div>
+              )}
+
+              {(rec.checkInPhotoUrl || rec.checkOutPhotoUrl) && (
+                <div className="grid grid-cols-2 gap-3">
+                  {rec.checkInPhotoUrl && (
+                    <a
+                      href={rec.checkInPhotoUrl}
+                      rel="noopener noreferrer"
+                      target="_blank"
+                      aria-label={`Buka bukti foto check-in ${rec.dateFormatted}`}
+                    >
+                      <img
+                        alt="Bukti foto check-in"
+                        className="h-28 w-full rounded-xl bg-surface-container object-cover"
+                        src={rec.checkInPhotoUrl}
+                      />
+                      <span className="mt-1 block text-center text-[11px] text-on-surface-variant">
+                        Foto check-in
+                      </span>
+                    </a>
+                  )}
+                  {rec.checkOutPhotoUrl && (
+                    <a
+                      href={rec.checkOutPhotoUrl}
+                      rel="noopener noreferrer"
+                      target="_blank"
+                      aria-label={`Buka bukti foto check-out ${rec.dateFormatted}`}
+                    >
+                      <img
+                        alt="Bukti foto check-out"
+                        className="h-28 w-full rounded-xl bg-surface-container object-cover"
+                        src={rec.checkOutPhotoUrl}
+                      />
+                      <span className="mt-1 block text-center text-[11px] text-on-surface-variant">
+                        Foto check-out
+                      </span>
+                    </a>
+                  )}
                 </div>
               )}
 
@@ -424,17 +475,13 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
                   {item.type === 'check_in' ? 'Check-in' : 'Check-out'} • {item.employee_id}
                 </h3>
                 <span>Tanggal: {item.attendance_date}</span>
+                <span>Waktu absensi: {new Date(item.checked_at).toLocaleString('id-ID')}</span>
                 <span>
                   Foto dicatat server: {new Date(item.photo_captured_at).toLocaleString('id-ID')}
                 </span>
                 <span>
                   GPS: {item.latitude?.toFixed(6) ?? '-'}, {item.longitude?.toFixed(6) ?? '-'}
                   {item.gps_accuracy_m !== null ? ` • Akurasi ±${item.gps_accuracy_m.toFixed(1)} m` : ''}
-                </span>
-                <span>
-                  Jarak ke kantor: {item.distance_to_office_m !== null
-                    ? `${Math.round(item.distance_to_office_m)} m`
-                    : '-'}
                 </span>
               </div>
             </article>

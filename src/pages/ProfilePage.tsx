@@ -197,7 +197,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
                 {profile.assignedLocation}
               </span>
               <span className="text-[11px] text-secondary mt-0.5">
-                Radius Geofence: {profile.geofenceRadiusMeters}m • Terkunci Presisi
+                Radius geofence opsional: {profile.geofenceRadiusMeters}m • Tidak membatasi presensi
               </span>
             </div>
           </div>
@@ -348,7 +348,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
           onClick={() =>
             onShowNotice(
               'Pengaturan Notifikasi',
-              'Pengingat jam masuk 15 menit sebelum toleransi geofence telah aktif secara default.'
+              'Pengingat waktu masuk 15 menit sebelum jadwal kerja telah aktif secara default.'
             )
           }
           className="p-3 rounded-2xl hover:bg-surface-container-low flex items-center justify-between transition-colors group"
@@ -362,7 +362,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
                 Pengaturan Notifikasi & Pengingat
               </span>
               <span className="text-[11px] text-on-surface-variant">
-                Alert jam masuk 15 menit sebelum geofence close
+                Pengingat jam masuk 15 menit sebelum jadwal kerja
               </span>
             </div>
           </div>

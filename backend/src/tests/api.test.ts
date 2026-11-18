@@ -77,6 +77,7 @@ class MemoryPrisma {
   offices = new Map<string, {
     id: string;
     name: string;
+    address: string | null;
     latitude: number;
     longitude: number;
     radius_m: number;
@@ -217,7 +218,6 @@ const validPayload = {
   longitude: 0,
   accuracy: 10,
   timestamp: '2020-01-01T00:00:00.000Z',
-  workLocationId: officeId,
 };
 
 async function withApi(
@@ -241,6 +241,7 @@ async function withApi(
     database.offices.set(officeId, {
       id: officeId,
       name: 'Test Office',
+      address: null,
       latitude: 0,
       longitude: 0,
       radius_m: 100,
@@ -411,6 +412,7 @@ test('active work location returns the configured frontend contract', async () =
     assert.deepEqual(await response.json(), {
       id: officeId,
       name: 'Test Office',
+      address: null,
       latitude: 0,
       longitude: 0,
       radiusMeters: 100,
@@ -420,20 +422,32 @@ test('active work location returns the configured frontend contract', async () =
   });
 });
 
-test('no active office returns 404', async () => {
+test('attendance succeeds without any configured office and stores GPS evidence', async () => {
+  await withApi(async (baseUrl, database) => {
+    const response = await callApi(baseUrl, '/api/attendance/check-in', {
+      token: 'valid-token',
+      method: 'POST',
+      body: {
+        ...validPayload,
+        latitude: -33.8688,
+        longitude: 151.2093,
+      },
+    });
+    assert.equal(response.status, 201);
+    const attendance = await response.json();
+    assert.equal(attendance.latitude, -33.8688);
+    assert.equal(attendance.longitude, 151.2093);
+    assert.equal(attendance.gps_accuracy_m, validPayload.accuracy);
+    assert.equal(attendance.office_id, null);
+    assert.equal(attendance.distance_to_office_m, null);
+    assert.equal(attendance.is_within_geofence, null);
+    assert.equal(database.photoObjects.size, 1);
+  }, { activeOffice: false });
+
   await withApi(async (baseUrl) => {
     const response = await callApi(baseUrl, '/api/work-locations/active', { token: 'valid-token' });
     assert.equal(response.status, 404);
   }, { activeOffice: false });
-
-  await withApi(async (baseUrl) => {
-    const response = await callApi(baseUrl, '/api/attendance/check-in', {
-      token: 'valid-token',
-      method: 'POST',
-      body: { ...validPayload, workLocationId: '00000000-0000-4000-8000-000000000099' },
-    });
-    assert.equal(response.status, 404);
-  });
 });
 
 test('invalid coordinates and accuracy are rejected', async () => {
@@ -450,18 +464,21 @@ test('invalid coordinates and accuracy are rejected', async () => {
   });
 });
 
-test('excessive GPS accuracy and outside-geofence positions are rejected', async () => {
+test('GPS accuracy policy is enforced without applying an office radius', async () => {
   await withApi(async (baseUrl) => {
     const accuracy = await callApi(baseUrl, '/api/attendance/check-in', {
       token: 'valid-token', method: 'POST', body: { ...validPayload, accuracy: 20.1 },
     });
     assert.equal(accuracy.status, 422);
 
-    const outside = await callApi(baseUrl, '/api/attendance/check-in', {
+    const farFromOffice = await callApi(baseUrl, '/api/attendance/check-in', {
       token: 'valid-token', method: 'POST', body: { ...validPayload, latitude: 0.01 },
     });
-    assert.equal(outside.status, 422);
-    assert.equal((await outside.json()).error, 'outside_geofence');
+    assert.equal(farFromOffice.status, 201);
+    const attendance = await farFromOffice.json();
+    assert.equal(attendance.latitude, 0.01);
+    assert.equal(attendance.office_id, null);
+    assert.equal(attendance.distance_to_office_m, null);
   });
 });
 
@@ -474,9 +491,10 @@ test('check-in and check-out succeed with server time and verified response', as
     const checkInRow = await checkIn.json();
     assert.equal(checkInRow.employee_id, employeeId);
     assert.equal(checkInRow.type, 'check_in');
-    assert.equal(checkInRow.is_within_geofence, true);
+    assert.equal(checkInRow.is_within_geofence, null);
     assert.equal(checkInRow.verification_status, 'verified');
-    assert.equal(checkInRow.office_id, officeId);
+    assert.equal(checkInRow.office_id, null);
+    assert.equal(checkInRow.distance_to_office_m, null);
     assert.equal(typeof checkInRow.photo_captured_at, 'string');
     assert.notEqual(checkInRow.checked_at, validPayload.timestamp);
     const checkedAt = new Date(checkInRow.checked_at);
@@ -543,15 +561,14 @@ test('attendance requires a valid selfie and rolls back if photo storage fails',
   });
 });
 
-test('GPS and geofence validation occur before a photo is stored', async () => {
+test('invalid GPS coordinates are rejected before a photo is stored', async () => {
   await withApi(async (baseUrl, database) => {
-    const outside = await callApi(baseUrl, '/api/attendance/check-in', {
+    const invalidCoordinates = await callApi(baseUrl, '/api/attendance/check-in', {
       token: 'valid-token',
       method: 'POST',
-      body: { ...validPayload, latitude: 0.01 },
+      body: { ...validPayload, latitude: 91 },
     });
-    assert.equal(outside.status, 422);
-    assert.equal((await outside.json()).error, 'outside_geofence');
+    assert.equal(invalidCoordinates.status, 400);
     assert.equal(database.photoObjects.size, 0);
     assert.equal(database.records.length, 0);
   });
@@ -683,11 +700,32 @@ test('attendance history only returns the authenticated employee records', async
   });
 });
 
+test('attendance history provides a short-lived URL for the caller own selfie', async () => {
+  await withApi(async (baseUrl) => {
+    const checkIn = await callApi(baseUrl, '/api/attendance/check-in', {
+      token: 'valid-token',
+      method: 'POST',
+      body: validPayload,
+    });
+    assert.equal(checkIn.status, 201);
+
+    const response = await callApi(baseUrl, '/api/attendance/history', {
+      token: 'valid-token',
+    });
+    assert.equal(response.status, 200);
+    const records = await response.json();
+    assert.equal(records.length, 1);
+    assert.match(records[0].photo_url, /^https:\/\/private\.example\//);
+    assert.equal(typeof records[0].photo_captured_at, 'string');
+  });
+});
+
 test('multiple active offices fail closed instead of selecting an arbitrary location', async () => {
   await withApi(async (baseUrl, database) => {
     database.offices.set('00000000-0000-4000-8000-000000000011', {
       id: '00000000-0000-4000-8000-000000000011',
       name: 'Second Office',
+      address: null,
       latitude: 0,
       longitude: 0,
       radius_m: 100,
@@ -700,7 +738,7 @@ test('multiple active offices fail closed instead of selecting an arbitrary loca
   });
 });
 
-test('attendance rejects a known but inactive office', async () => {
+test('attendance succeeds when the configured office is inactive', async () => {
   await withApi(async (baseUrl, database) => {
     const office = database.offices.get(officeId);
     assert.ok(office);
@@ -711,8 +749,10 @@ test('attendance rejects a known but inactive office', async () => {
       method: 'POST',
       body: validPayload,
     });
-    assert.equal(response.status, 404);
-    assert.equal(database.records.length, 0);
+    assert.equal(response.status, 201);
+    const attendance = await response.json();
+    assert.equal(attendance.office_id, null);
+    assert.equal(database.records.length, 1);
   });
 });
 

@@ -137,8 +137,9 @@ export function createApp({ prisma, supabase, config, photoStorage }: AppDepende
       const result = serializeAttendance(row);
       if (
         result.verification_status !== 'verified' ||
-        result.is_within_geofence !== true ||
-        result.office_id !== payload.workLocationId ||
+        result.latitude === null ||
+        result.longitude === null ||
+        result.gps_accuracy_m === null ||
         !result.photo_captured_at
       ) {
         throw new ApiError(500, 'attendance_verification_failed', 'Server could not verify the attendance record.');
@@ -155,9 +156,10 @@ export function createApp({ prisma, supabase, config, photoStorage }: AppDepende
   app.get('/api/attendance/history', authenticate, async (request, response, next) => {
     try {
       const authRequest = request as AuthenticatedRequest;
-      if (!authRequest.authUser || !authRequest.authClaims) {
+      if (!authRequest.authUser || !authRequest.authClaims || !authRequest.accessToken) {
         throw new ApiError(401, 'unauthorized', 'Authentication is required.');
       }
+      const accessToken = authRequest.accessToken;
       const requestedLimit = request.query.limit === undefined ? 30 : Number(request.query.limit);
       if (!Number.isInteger(requestedLimit) || requestedLimit < 1 || requestedLimit > 100) {
         throw new ApiError(400, 'invalid_limit', 'History limit must be an integer between 1 and 100.');
@@ -168,7 +170,14 @@ export function createApp({ prisma, supabase, config, photoStorage }: AppDepende
         authRequest.authClaims,
         requestedLimit
       );
-      response.status(200).json(records);
+      const history = await Promise.all(records.map(async (row) => ({
+        ...serializeAttendance(row),
+        photo_url:
+          row.photo_path && row.photo_captured_at
+            ? await photoStorage.createSignedUrl(accessToken, row.photo_path)
+            : null,
+      })));
+      response.status(200).json(history);
     } catch (error) {
       next(error);
     }

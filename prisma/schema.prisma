@@ -619,6 +619,7 @@ model employees {
 model offices {
   id         String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   name       String
+  address    String?
   latitude   Float
   longitude  Float
   radius_m   Int          @default(100)

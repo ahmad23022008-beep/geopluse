@@ -2,11 +2,7 @@ import { useState, type FormEvent } from 'react';
 import { AlertCircle, Lock, LogIn, Mail, Radio } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 
-export interface LoginPageProps {
-  onLoginSuccess: () => void;
-}
-
-export function LoginPage({ onLoginSuccess }: LoginPageProps) {
+export function LoginPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
@@ -28,7 +24,6 @@ export function LoginPage({ onLoginSuccess }: LoginPageProps) {
         return;
       }
 
-      onLoginSuccess();
     } catch (error) {
       setErrorMessage(
         error instanceof Error

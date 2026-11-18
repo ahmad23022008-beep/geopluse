@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { X, Send, FileText, Calendar, Clock, RefreshCw, CheckCircle2 } from 'lucide-react';
 
 export type ServiceModalType = 'izin' | 'lembur' | 'tukar_shift' | 'slip_absen' | null;
@@ -14,8 +14,6 @@ export const SelfServiceModal: React.FC<SelfServiceModalProps> = ({
   onClose,
   onSubmitSuccess,
 }) => {
-  if (!type) return null;
-
   const [submitted, setSubmitted] = useState(false);
   const [formData, setFormData] = useState({
     reason: '',
@@ -23,6 +21,12 @@ export const SelfServiceModal: React.FC<SelfServiceModalProps> = ({
     hours: '2',
     targetColleague: 'Fahri Ramadhan (Backend Dev)',
   });
+
+  useEffect(() => {
+    if (type) setSubmitted(false);
+  }, [type]);
+
+  if (!type) return null;
 
   const getTitle = () => {
     switch (type) {

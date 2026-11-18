@@ -176,7 +176,7 @@ export function SelfieCameraModal({
       <section
         aria-labelledby="selfie-camera-title"
         aria-modal="true"
-        className="w-full max-w-lg rounded-2xl border border-structural-border bg-surface-container-lowest p-4 shadow-2xl sm:p-6"
+        className="max-h-[calc(100dvh-2rem)] w-full max-w-lg overflow-y-auto rounded-2xl border border-structural-border bg-surface-container-lowest p-4 shadow-2xl sm:p-6"
         role="dialog"
       >
         <div className="mb-4 flex items-center justify-between gap-3">

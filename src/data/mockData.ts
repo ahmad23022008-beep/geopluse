@@ -173,7 +173,7 @@ export const DIAGNOSTIC_SCENARIOS: Record<string, DiagnosticConfig> = {
     statusBadge: 'PERMISSION DENIED',
     badgeType: 'neutral',
     statusTitle: 'Akses Lokasi Dinonaktifkan',
-    statusSubtitle: 'Aplikasi GeoPulse memerlukan izin akses lokasi sistem desktop OS untuk validasi geofence real-time.',
+    statusSubtitle: 'Aplikasi GeoPulse memerlukan izin akses lokasi perangkat untuk mencatat bukti GPS saat presensi.',
     userDistanceMeters: 0,
     accuracyMeters: 0,
     satellites: 0,

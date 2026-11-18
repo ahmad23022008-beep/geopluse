@@ -1,6 +1,6 @@
 import React from 'react';
 import { AttendanceRecord } from '../types/attendance';
-import { X, MapPin, ShieldCheck, Navigation } from 'lucide-react';
+import { X, MapPin } from 'lucide-react';
 
 interface LocationDetailModalProps {
   record: AttendanceRecord | null;
@@ -12,6 +12,9 @@ export const LocationDetailModal: React.FC<LocationDetailModalProps> = ({
   onClose,
 }) => {
   if (!record) return null;
+  const coordinates = record.coordinates?.accuracyMeters !== undefined
+    ? `${record.coordinates.lat.toFixed(6)}, ${record.coordinates.lng.toFixed(6)}`
+    : 'Koordinat tidak tersedia';
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fadeIn">
@@ -28,7 +31,7 @@ export const LocationDetailModal: React.FC<LocationDetailModalProps> = ({
         <div className="mb-4">
           <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-secondary-fixed/50 text-secondary text-xs font-semibold mb-1">
             <MapPin className="w-3.5 h-3.5" />
-            <span>AUDIT LOG GEOFENCE GPS</span>
+            <span>LOKASI GPS KEHADIRAN</span>
           </div>
           <h2 className="text-lg font-bold text-on-surface">
             {record.dateFormatted}
@@ -38,42 +41,21 @@ export const LocationDetailModal: React.FC<LocationDetailModalProps> = ({
           </p>
         </div>
 
-        {/* Visual Map Canvas / Simulation */}
+        {/* Local coordinate view avoids sending employee location to a third-party map provider. */}
         <div className="relative w-full h-52 rounded-2xl overflow-hidden bg-[#161a33] mb-4 border border-structural-border flex items-center justify-center">
-          {/* Subtle grid pattern background */}
           <div className="absolute inset-0 bg-[radial-gradient(#3a4efb_1px,transparent_1px)] [background-size:16px_16px] opacity-25"></div>
-
-          {/* Concentric Geofence circles */}
-          <div className="relative flex items-center justify-center w-40 h-40">
-            <div className="absolute inset-0 rounded-full border-2 border-dashed border-secondary-container/60 animate-pulse"></div>
-            <div className="absolute w-28 h-28 rounded-full bg-secondary-container/10"></div>
-            <div className="absolute w-16 h-16 rounded-full bg-primary/20"></div>
-
-            {/* HQ Center Marker */}
-            <div className="absolute flex flex-col items-center">
-              <div className="w-4 h-4 rounded-full bg-primary ring-4 ring-white shadow-lg"></div>
-              <span className="font-mono text-[9px] text-white font-bold bg-[#161a33]/90 px-1.5 py-0.5 rounded mt-1 shadow">
-                Menara Mandiri HQ
-              </span>
-            </div>
-
-            {/* User Check-In Pin */}
-            <div className="absolute top-4 left-6 flex flex-col items-center">
-              <div className="relative flex items-center justify-center">
-                <span className="animate-ping absolute inline-flex h-6 w-6 rounded-full bg-tertiary-fixed opacity-60"></span>
-                <span className="w-4 h-4 rounded-full bg-tertiary-fixed ring-2 ring-black flex items-center justify-center">
-                  <span className="w-1.5 h-1.5 rounded-full bg-black"></span>
-                </span>
-              </div>
-              <span className="font-mono text-[9px] text-[#161a33] font-bold bg-tertiary-fixed px-1.5 py-0.5 rounded mt-0.5 shadow">
-                Posisi: {record.coordinates?.distanceMeters || 12}m
-              </span>
-            </div>
+          <div className="relative z-10 flex flex-col items-center gap-2 text-center">
+            {record.coordinates?.accuracyMeters !== undefined && (
+              <MapPin className="h-9 w-9 text-tertiary-fixed drop-shadow-lg" />
+            )}
+            <span className="rounded-lg bg-[#161a33]/90 px-3 py-1.5 font-mono text-xs font-semibold text-white">
+              {coordinates}
+            </span>
           </div>
 
           <div className="absolute bottom-2 left-3 right-3 flex items-center justify-between text-[11px] text-[#bdc2ff] bg-[#212644]/90 backdrop-blur-sm px-2.5 py-1 rounded-lg">
-            <span>Radius Aman: 50 Meter</span>
-            <span className="font-mono text-tertiary-fixed font-semibold">STATUS: IN-BOUNDS VERIFIED</span>
+            <span>GPS snapshot</span>
+            <span className="font-mono text-tertiary-fixed font-semibold">{record.dateFormatted}</span>
           </div>
         </div>
 
@@ -81,21 +63,25 @@ export const LocationDetailModal: React.FC<LocationDetailModalProps> = ({
         <div className="grid grid-cols-2 gap-2 text-xs mb-4">
           <div className="p-2.5 rounded-xl bg-surface-container">
             <span className="text-[11px] text-on-surface-variant block">Titik Check-In:</span>
-            <span className="font-semibold text-on-surface">{record.checkInLocation || 'Lobby Utama'}</span>
+            <span className="font-semibold text-on-surface">{record.checkInLocation || 'Lokasi tidak tersedia'}</span>
           </div>
           <div className="p-2.5 rounded-xl bg-surface-container">
             <span className="text-[11px] text-on-surface-variant block">Titik Check-Out:</span>
-            <span className="font-semibold text-on-surface">{record.checkOutLocation || 'East Wing Gate'}</span>
+            <span className="font-semibold text-on-surface">{record.checkOutLocation || 'Lokasi tidak tersedia'}</span>
           </div>
           <div className="p-2.5 rounded-xl bg-surface-container">
             <span className="text-[11px] text-on-surface-variant block">Koordinat Lat/Lng:</span>
             <span className="font-mono text-on-surface font-medium">
-              -6.225514, 106.809182
+              {coordinates}
             </span>
           </div>
           <div className="p-2.5 rounded-xl bg-surface-container">
-            <span className="text-[11px] text-on-surface-variant block">Integritas Hash:</span>
-            <span className="font-mono text-primary font-semibold">SHA256: VALID</span>
+            <span className="text-[11px] text-on-surface-variant block">Akurasi GPS:</span>
+            <span className="font-mono text-on-surface font-medium">
+              {record.coordinates?.accuracyMeters !== undefined
+                ? `±${record.coordinates.accuracyMeters.toFixed(1)} m`
+                : 'Tidak tersedia'}
+            </span>
           </div>
         </div>
 

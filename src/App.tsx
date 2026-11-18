@@ -19,16 +19,123 @@ import { LoginPage } from './pages/LoginPage';
 import { ProfilePage } from './pages/ProfilePage';
 import { Radio } from 'lucide-react';
 import {
+  getAttendanceHistory,
   submitAttendance,
+  type AttendanceDB,
   type AttendanceLocationPayload,
   type VerifiedAttendanceDB,
 } from './services/attendanceService';
+import { supabase } from './lib/supabase';
+import type { Session } from '@supabase/supabase-js';
+
+const ATTENDANCE_TIME_ZONE = 'Asia/Jakarta';
+
+function formatAttendanceTime(timestamp: string): string {
+  return `${new Date(timestamp).toLocaleTimeString('id-ID', {
+    hour: '2-digit',
+    minute: '2-digit',
+    timeZone: ATTENDANCE_TIME_ZONE,
+  })} WIB`;
+}
+
+function formatAttendanceDate(date: string): string {
+  return new Date(`${date}T12:00:00.000Z`).toLocaleDateString('id-ID', {
+    weekday: 'long',
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+    timeZone: ATTENDANCE_TIME_ZONE,
+  });
+}
+
+function getAttendanceDateToday(): string {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: ATTENDANCE_TIME_ZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(new Date());
+  const values = Object.fromEntries(parts.map(({ type, value }) => [type, value]));
+  return `${values.year}-${values.month}-${values.day}`;
+}
+
+function toAttendanceRecords(rows: AttendanceDB[]): AttendanceRecord[] {
+  const grouped = new Map<string, {
+    record: AttendanceRecord;
+    checkInTimestamp?: number;
+    checkOutTimestamp?: number;
+  }>();
+
+  rows.forEach((row) => {
+    let group = grouped.get(row.attendance_date);
+    if (!group) {
+      group = {
+        record: {
+          id: row.id,
+          date: row.attendance_date,
+          dateFormatted: formatAttendanceDate(row.attendance_date),
+          shift: 'Shift Reguler',
+          shiftHours: '08:30 - 17:00',
+          status: 'wfo',
+          statusLabel: 'Hadir Tercatat',
+          statusColor: 'blue',
+        },
+      };
+      grouped.set(row.attendance_date, group);
+    }
+
+    const time = formatAttendanceTime(row.checked_at);
+    const location =
+      row.latitude !== null && row.longitude !== null
+        ? `GPS ${row.latitude.toFixed(6)}, ${row.longitude.toFixed(6)}`
+        : 'GPS tidak tersedia';
+
+    if (row.type === 'check_in') {
+      group.record.id = row.id;
+      group.record.checkIn = time;
+      group.record.checkInLocation = location;
+      group.checkInTimestamp = new Date(row.checked_at).getTime();
+      if (row.latitude !== null && row.longitude !== null) {
+        group.record.coordinates = {
+          lat: row.latitude,
+          lng: row.longitude,
+          distanceMeters: row.distance_to_office_m,
+          accuracyMeters: row.gps_accuracy_m ?? undefined,
+        };
+      }
+      if (row.photo_url) group.record.checkInPhotoUrl = row.photo_url;
+    } else {
+      group.record.checkOut = time;
+      group.record.checkOutLocation = location;
+      group.checkOutTimestamp = new Date(row.checked_at).getTime();
+      if (row.photo_url) group.record.checkOutPhotoUrl = row.photo_url;
+    }
+  });
+
+  return [...grouped.values()]
+    .map(({ record, checkInTimestamp, checkOutTimestamp }) => {
+      if (checkInTimestamp !== undefined && checkOutTimestamp !== undefined) {
+        const durationMinutes = Math.max(0, Math.floor((checkOutTimestamp - checkInTimestamp) / 60000));
+        record.duration = `${Math.floor(durationMinutes / 60)} Jam ${durationMinutes % 60} Mnt`;
+      } else if (checkInTimestamp !== undefined) {
+        record.duration = 'Berjalan';
+      }
+      return record;
+    })
+    .sort((left, right) => right.date.localeCompare(left.date));
+}
 
 export const App: React.FC = () => {
   const [currentPage, setCurrentPage] = useState<PageId>('dashboard');
-  const [isLoggedIn, setIsLoggedIn] = useState(false);
-  const [viewportMode, setViewportMode] = useState<'desktop' | 'mobile'>('desktop');
+  const [authSession, setAuthSession] = useState<Session | null>(null);
+  const [isAuthReady, setIsAuthReady] = useState(false);
+  const [isCompactViewport, setIsCompactViewport] = useState(() => window.innerWidth < 768);
+  const [viewportMode, setViewportMode] = useState<'desktop' | 'mobile'>(() =>
+    window.innerWidth < 768 ? 'mobile' : 'desktop'
+  );
   const [attendanceStatus, setAttendanceStatus] = useState<AttendanceStatus>('not_clocked_in');
+  const [attendanceDataReady, setAttendanceDataReady] = useState(false);
+  const [attendanceLoadError, setAttendanceLoadError] = useState<string | null>(null);
   const [checkInTime, setCheckInTime] = useState<string | null>(null);
   const [checkOutTime, setCheckOutTime] = useState<string | null>(null);
   const [records, setRecords] = useState<AttendanceRecord[]>([]);
@@ -39,6 +146,74 @@ export const App: React.FC = () => {
   const [serviceModalType, setServiceModalType] = useState<ServiceModalType>(null);
   const [locationRecord, setLocationRecord] = useState<AttendanceRecord | null>(null);
   const [toast, setToast] = useState<ToastMessage | null>(null);
+
+  useEffect(() => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setAuthSession(session);
+      setIsAuthReady(true);
+    });
+    return () => subscription.unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    const updateViewportMode = () => {
+      const isCompact = window.innerWidth < 768;
+      setIsCompactViewport(isCompact);
+      if (isCompact) setViewportMode('mobile');
+    };
+    window.addEventListener('resize', updateViewportMode);
+    return () => window.removeEventListener('resize', updateViewportMode);
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    setAttendanceDataReady(false);
+    setAttendanceLoadError(null);
+
+    if (!authSession) {
+      setRecords([]);
+      setAttendanceStatus('not_clocked_in');
+      setCheckInTime(null);
+      setCheckOutTime(null);
+      setCurrentPage('dashboard');
+      return () => {
+        active = false;
+      };
+    }
+
+    void getAttendanceHistory()
+      .then((rows) => {
+        if (!active) return;
+        const history = toAttendanceRecords(rows);
+        const today = getAttendanceDateToday();
+        const todayRows = rows.filter((row) => row.attendance_date === today);
+        const checkedIn = todayRows.some((row) => row.type === 'check_in');
+        const checkedOut = todayRows.some((row) => row.type === 'check_out');
+        const todayRecord = history.find((record) => record.date === today);
+
+        setRecords(history);
+        setAttendanceStatus(
+          checkedOut ? 'clocked_out' : checkedIn ? 'clocked_in' : 'not_clocked_in'
+        );
+        setCheckInTime(todayRecord?.checkIn ?? null);
+        setCheckOutTime(todayRecord?.checkOut ?? null);
+        setAttendanceDataReady(true);
+      })
+      .catch((error: unknown) => {
+        if (!active) return;
+        setRecords([]);
+        setAttendanceStatus('not_clocked_in');
+        setCheckInTime(null);
+        setCheckOutTime(null);
+        setAttendanceLoadError(
+          error instanceof Error ? error.message : 'Riwayat absensi gagal dimuat.'
+        );
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [authSession]);
 
   const showToast = (title: string, message: string, type: 'success' | 'warning' | 'info' = 'success') => {
     setToast({ id: Date.now().toString(), title, message, type });
@@ -55,6 +230,14 @@ export const App: React.FC = () => {
     }
   }, [toast]);
   const handleRequestAttendance = (type: 'masuk' | 'pulang') => {
+    if (!attendanceDataReady) {
+      showToast(
+        'Status Absensi Belum Tersedia',
+        attendanceLoadError ?? 'Sedang memuat status absensi. Coba lagi sebentar.',
+        'warning'
+      );
+      return;
+    }
     setAttendanceType(type);
     setCurrentPage('verification-gps');
   };
@@ -74,18 +257,8 @@ export const App: React.FC = () => {
       throw new Error('Server mengembalikan waktu absensi yang tidak valid.');
     }
 
-    const timeStr = `${checkedAt.toLocaleTimeString('id-ID', {
-      hour: '2-digit',
-      minute: '2-digit',
-      timeZone: 'Asia/Jakarta',
-    })} WIB`;
-    const dateFormatted = checkedAt.toLocaleDateString('id-ID', {
-      weekday: 'long',
-      day: 'numeric',
-      month: 'short',
-      year: 'numeric',
-      timeZone: 'Asia/Jakarta',
-    });
+    const timeStr = formatAttendanceTime(attendance.checked_at);
+    const dateFormatted = formatAttendanceDate(attendance.attendance_date);
 
     if (type === 'masuk') {
       setAttendanceStatus('clocked_in');
@@ -97,15 +270,16 @@ export const App: React.FC = () => {
         shift: 'Shift Reguler',
         shiftHours: '08:30 - 17:00',
         checkIn: timeStr,
-        checkInLocation: `Radius ${Math.round(attendance.distance_to_office_m ?? 0)}m`,
+        checkInLocation: `GPS ${attendance.latitude.toFixed(6)}, ${attendance.longitude.toFixed(6)}`,
         duration: 'Berjalan',
-        status: 'tepat_waktu',
+        status: 'wfo',
         statusLabel: 'Hadir Tercatat',
-        statusColor: 'lime',
+        statusColor: 'blue',
         coordinates: {
           lat: attendance.latitude,
           lng: attendance.longitude,
           distanceMeters: attendance.distance_to_office_m,
+          accuracyMeters: attendance.gps_accuracy_m,
         },
       };
       setRecords((current) => [newRecord, ...current]);
@@ -119,7 +293,7 @@ export const App: React.FC = () => {
             ? {
                 ...record,
                 checkOut: timeStr,
-                checkOutLocation: `Radius ${Math.round(attendance.distance_to_office_m)}m`,
+                checkOutLocation: `GPS ${attendance.latitude.toFixed(6)}, ${attendance.longitude.toFixed(6)}`,
               }
             : record
         )
@@ -180,26 +354,34 @@ export const App: React.FC = () => {
     );
   };
 
-  const handleLogout = () => {
-    setAttendanceStatus('not_clocked_in');
-    setCheckInTime(null);
-    setCheckOutTime(null);
-    setCurrentPage('dashboard');
-    showToast('Sesi Berakhir', 'Anda telah keluar dari akun.', 'info');
+  const handleLogout = async () => {
+    const { error } = await supabase.auth.signOut();
+    if (error) {
+      showToast('Gagal Keluar', error.message, 'warning');
+    }
   };
 
-  // Kalau belum login → tampilkan halaman login
-  if (!isLoggedIn) {
-    return <LoginPage onLoginSuccess={() => setIsLoggedIn(true)} />;
+  if (!isAuthReady) {
+    return (
+      <main className="min-h-screen flex items-center justify-center bg-[#fbf8ff] px-4 text-sm text-on-surface-variant">
+        Memeriksa sesi login...
+      </main>
+    );
+  }
+
+  if (!authSession) {
+    return <LoginPage />;
   }
 
   return (
-    <div className="flex flex-col h-screen w-screen bg-[#fbf8ff] text-on-surface select-none overflow-hidden">
+    <div className="flex h-[100dvh] w-screen flex-col bg-[#fbf8ff] text-on-surface select-none overflow-hidden">
       {/* 1. Desktop Frameless Window TitleBar */}
-      <DesktopTitleBar
-        viewportMode={viewportMode}
-        setViewportMode={setViewportMode}
-      />
+      {!isCompactViewport && (
+        <DesktopTitleBar
+          viewportMode={viewportMode}
+          setViewportMode={setViewportMode}
+        />
+      )}
 
       {/* 2. Main Window Shell */}
       {viewportMode === 'desktop' ? (
@@ -233,9 +415,14 @@ export const App: React.FC = () => {
                 onConfirmAttendance={handleAttendance}
                 attendanceType={attendanceType}
                 canSubmit={
-                  attendanceType === 'masuk'
+                  attendanceDataReady && (attendanceType === 'masuk'
                     ? attendanceStatus === 'not_clocked_in'
-                    : attendanceStatus === 'clocked_in'
+                    : attendanceStatus === 'clocked_in')
+                }
+                attendanceUnavailableReason={
+                  attendanceDataReady
+                    ? null
+                    : attendanceLoadError ?? 'Memeriksa status absensi...'
                 }
               />
             )}
@@ -243,6 +430,8 @@ export const App: React.FC = () => {
             {currentPage === 'attendance-history' && (
               <HistoryPage
                 records={records}
+                isLoading={!attendanceDataReady && !attendanceLoadError && !!authSession}
+                loadError={attendanceLoadError}
                 onOpenMapDetail={(rec) => setLocationRecord(rec)}
                 onExportReport={handleExportReport}
               />
@@ -313,9 +502,14 @@ export const App: React.FC = () => {
                   onConfirmAttendance={handleAttendance}
                   attendanceType={attendanceType}
                   canSubmit={
-                    attendanceType === 'masuk'
+                    attendanceDataReady && (attendanceType === 'masuk'
                       ? attendanceStatus === 'not_clocked_in'
-                      : attendanceStatus === 'clocked_in'
+                      : attendanceStatus === 'clocked_in')
+                  }
+                  attendanceUnavailableReason={
+                    attendanceDataReady
+                      ? null
+                      : attendanceLoadError ?? 'Memeriksa status absensi...'
                   }
                 />
               )}
@@ -323,6 +517,8 @@ export const App: React.FC = () => {
               {currentPage === 'attendance-history' && (
                 <HistoryPage
                   records={records}
+                  isLoading={!attendanceDataReady && !attendanceLoadError && !!authSession}
+                  loadError={attendanceLoadError}
                   onOpenMapDetail={(rec) => setLocationRecord(rec)}
                   onExportReport={handleExportReport}
                 />

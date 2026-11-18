@@ -6,9 +6,12 @@ All protected endpoints require `Authorization: Bearer <Supabase access token>` 
 
 `GET /api/health` is public and returns only `{ "status": "ok", "service": "geopulse-attendance-api" }`; it does not reveal database or credential state.
 
-## Active Work Location
+## Optional Work Location
 
 `GET /api/work-locations/active`
+
+This endpoint is retained for optional future geofence features. Check-in and
+check-out do not call it and do not require an active office.
 
 Success response (`200`):
 
@@ -16,6 +19,7 @@ Success response (`200`):
 {
   "id": "work-location-uuid",
   "name": "Office name",
+  "address": "Office address",
   "latitude": -6.2,
   "longitude": 106.8,
   "radiusMeters": 100,
@@ -24,7 +28,8 @@ Success response (`200`):
 }
 ```
 
-Return `404` when there is no active work location. Coordinates and radius must come from backend configuration. `maxAccuracyMeters` is required for client-side preliminary geofence validation; the server must apply the authoritative configured limit as well.
+This endpoint returns `404` when no active work location exists. Its result has
+no effect on attendance eligibility.
 
 ## Check In / Check Out
 
@@ -41,16 +46,20 @@ confirmed `photo` part is required:
 | `longitude` | GPS longitude |
 | `accuracy` | GPS accuracy in meters |
 | `timestamp` | ISO timestamp from the GPS reading |
-| `workLocationId` | Active work-location UUID |
 | `photo` | Confirmed JPEG selfie, maximum 5 MB |
+
+Older clients may send `workLocationId`; the API ignores it for attendance and
+does not require or save an office association.
 
 The photo must have a valid JPEG signature and is uploaded to the private
 `ATTENDANCE_PHOTO_BUCKET` before an attendance row is committed. A failed upload
 must fail the attendance request. The client timestamp is untrusted and must not
 determine the official attendance time. Use server time. The server must validate
 the authenticated employee, active account, coordinates, GPS accuracy policy,
-active work location, geofence radius, attendance rules, duplicate check-in/out,
-and current attendance state.
+attendance rules, duplicate check-in/out, and current attendance state. No office
+configuration or geofence membership is required. New attendance rows store the
+GPS evidence and leave `office_id`, `distance_to_office_m`, and
+`is_within_geofence` null.
 The JSON-only attendance request format is no longer accepted; deploy the updated
 client and API together so photo-less requests cannot create attendance.
 
@@ -66,15 +75,15 @@ Successful response (`200` or `201`) must include the server-verified row:
   "latitude": -6.2,
   "longitude": 106.8,
   "gps_accuracy_m": 12,
-  "distance_to_office_m": 35,
-  "is_within_geofence": true,
-  "office_id": "work-location-uuid",
+  "distance_to_office_m": null,
+  "is_within_geofence": null,
+  "office_id": null,
   "verification_status": "verified",
   "photo_captured_at": "2026-10-19T02:00:04.000Z"
 }
 ```
 
-The client treats the request as successful only when `verification_status` is `verified`, `is_within_geofence` is `true`, and `office_id` matches the submitted work location. All validation failures must return a non-2xx response with a JSON `message`; never return a success-shaped response when the attendance was not approved.
+The client treats the request as successful only when `verification_status` is `verified` and the response contains the recorded GPS and selfie timestamp. All validation failures must return a non-2xx response with a JSON `message`; never return a success-shaped response when the attendance was not approved.
 
 ## Admin Attendance Photo Evidence
 
@@ -88,7 +97,7 @@ non-admin access. Employees can access only their own private photo objects.
 
 ## Attendance History
 
-`GET /api/attendance/history?limit=30` returns the same attendance row shape as the successful write response in descending attendance-date/check time order. It is optional for the current UI, which still renders its passed-in records, but is available for replacing local history data. The server always derives the employee from the verified token and does not accept an employee ID query parameter. Errors use `{ "error": "stable_code", "message": "Human-readable explanation" }`.
+`GET /api/attendance/history?limit=30` returns the attendance row shape in descending attendance-date/check time order, plus `photo_url`. The server signs only the authenticated employee's own private photo objects; `photo_url` is `null` when an older attendance row has no photo and otherwise expires after five minutes. The server always derives the employee from the verified token and does not accept an employee ID query parameter. Errors use `{ "error": "stable_code", "message": "Human-readable explanation" }`.
 
 ## Local And Mobile Testing
 

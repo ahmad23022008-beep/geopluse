@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabase';
 export interface WorkLocation {
   id: string;
   name: string;
+  address: string | null;
   latitude: number;
   longitude: number;
   radiusMeters: number;
@@ -61,6 +62,9 @@ export async function getActiveWorkLocation(): Promise<WorkLocation | null> {
   if (
     typeof location.id !== 'string' ||
     typeof location.name !== 'string' ||
+    (location.address !== undefined &&
+      location.address !== null &&
+      typeof location.address !== 'string') ||
     typeof latitude !== 'number' ||
     typeof longitude !== 'number' ||
     !isValidCoordinate(latitude, longitude) ||
@@ -75,6 +79,7 @@ export async function getActiveWorkLocation(): Promise<WorkLocation | null> {
   return {
     id: location.id,
     name: location.name,
+    address: typeof location.address === 'string' ? location.address : null,
     latitude,
     longitude,
     radiusMeters,

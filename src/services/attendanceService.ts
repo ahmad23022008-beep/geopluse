@@ -37,6 +37,7 @@ export interface AttendanceDB {
   address_label: string | null;
   verification_status: 'verified' | 'rejected' | 'pending';
   note: string | null;
+  photo_url?: string | null;
 }
 
 export type VerifiedAttendanceDB = AttendanceDB & {
@@ -44,9 +45,6 @@ export type VerifiedAttendanceDB = AttendanceDB & {
   latitude: number;
   longitude: number;
   gps_accuracy_m: number;
-  distance_to_office_m: number;
-  is_within_geofence: true;
-  office_id: string;
   verification_status: 'verified';
 };
 
@@ -62,6 +60,16 @@ export interface AttendancePhotoEvidence {
   longitude: number | null;
   gps_accuracy_m: number | null;
   distance_to_office_m: number | null;
+}
+
+function isValidAttendanceDate(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  return Number.isFinite(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+}
+
+function isValidTimestamp(value: string): boolean {
+  return Number.isFinite(Date.parse(value));
 }
 
 // =====================================================
@@ -88,27 +96,122 @@ export async function getEmployeeProfile(): Promise<EmployeeDB | null> {
 }
 
 // =====================================================
-// GET OFFICE (untuk geofence)
-// =====================================================
-// =====================================================
 // GET ATTENDANCE HISTORY
 // =====================================================
 export async function getAttendanceHistory(
-  employeeId: string,
   limit = 30
 ): Promise<AttendanceDB[]> {
-  const { data, error } = await supabase
-    .from('attendance')
-    .select('*')
-    .eq('employee_id', employeeId)
-    .order('checked_at', { ascending: false })
-    .limit(limit);
-
-  if (error) {
-    console.error('Gagal ambil history:', error);
-    return [];
+  const apiUrl = import.meta.env.VITE_ATTENDANCE_API_URL?.replace(/\/+$/, '');
+  if (!apiUrl) {
+    throw new Error('Layanan riwayat absensi backend belum dikonfigurasi.');
   }
-  return data || [];
+
+  const { data, error: sessionError } = await supabase.auth.getSession();
+  const accessToken = data.session?.access_token;
+  if (sessionError || !accessToken) {
+    throw new Error('Sesi login tidak valid. Silakan masuk kembali.');
+  }
+
+  const response = await fetch(
+    `${apiUrl}/api/attendance/history?limit=${encodeURIComponent(String(limit))}`,
+    { headers: { Authorization: `Bearer ${accessToken}` } }
+  );
+  const result: unknown = await response.json().catch(() => null);
+  if (!response.ok) {
+    if (response.status === 401) {
+      const { error: signOutError } = await supabase.auth.signOut();
+      if (signOutError) {
+        throw new Error(`Sesi login tidak valid dan gagal diakhiri: ${signOutError.message}`);
+      }
+      throw new Error('Sesi login tidak valid. Silakan masuk kembali.');
+    }
+    const message =
+      result && typeof result === 'object' && 'message' in result &&
+      typeof result.message === 'string'
+        ? result.message
+        : `Server riwayat absensi menolak permintaan (${response.status}).`;
+    throw new Error(message);
+  }
+  if (!Array.isArray(result)) {
+    throw new Error('Server mengembalikan daftar riwayat absensi yang tidak valid.');
+  }
+
+  return result.map((item: unknown) => {
+    if (
+      !item ||
+      typeof item !== 'object' ||
+      !('id' in item) ||
+      typeof item.id !== 'string' ||
+      !('employee_id' in item) ||
+      typeof item.employee_id !== 'string' ||
+      !('type' in item) ||
+      (item.type !== 'check_in' && item.type !== 'check_out') ||
+      !('attendance_date' in item) ||
+      typeof item.attendance_date !== 'string' ||
+      !isValidAttendanceDate(item.attendance_date) ||
+      !('checked_at' in item) ||
+      typeof item.checked_at !== 'string' ||
+      !isValidTimestamp(item.checked_at) ||
+      !('latitude' in item) ||
+      (item.latitude !== null &&
+        (typeof item.latitude !== 'number' ||
+          !Number.isFinite(item.latitude) ||
+          item.latitude < -90 ||
+          item.latitude > 90)) ||
+      !('longitude' in item) ||
+      (item.longitude !== null &&
+        (typeof item.longitude !== 'number' ||
+          !Number.isFinite(item.longitude) ||
+          item.longitude < -180 ||
+          item.longitude > 180)) ||
+      !('gps_accuracy_m' in item) ||
+      (item.gps_accuracy_m !== null &&
+        (typeof item.gps_accuracy_m !== 'number' || !Number.isFinite(item.gps_accuracy_m))) ||
+      !('distance_to_office_m' in item) ||
+      (item.distance_to_office_m !== null &&
+        (typeof item.distance_to_office_m !== 'number' ||
+          !Number.isFinite(item.distance_to_office_m))) ||
+      !('is_within_geofence' in item) ||
+      (item.is_within_geofence !== null && typeof item.is_within_geofence !== 'boolean') ||
+      !('office_id' in item) ||
+      (item.office_id !== null && typeof item.office_id !== 'string') ||
+      !('verification_status' in item) ||
+      (item.verification_status !== 'verified' &&
+        item.verification_status !== 'rejected' &&
+        item.verification_status !== 'pending') ||
+      !('address_label' in item) ||
+      (item.address_label !== null && typeof item.address_label !== 'string') ||
+      !('note' in item) ||
+      (item.note !== null && typeof item.note !== 'string') ||
+      !('photo_captured_at' in item) ||
+      (item.photo_captured_at !== null &&
+        (typeof item.photo_captured_at !== 'string' ||
+          !isValidTimestamp(item.photo_captured_at))) ||
+      !('photo_url' in item) ||
+      (item.photo_url !== null && typeof item.photo_url !== 'string')
+    ) {
+      throw new Error('Server mengembalikan data riwayat absensi yang tidak valid.');
+    }
+
+    return {
+      id: item.id,
+      employee_id: item.employee_id,
+      type: item.type,
+      attendance_date: item.attendance_date,
+      checked_at: item.checked_at,
+      latitude: item.latitude,
+      longitude: item.longitude,
+      gps_accuracy_m: item.gps_accuracy_m,
+      distance_to_office_m: item.distance_to_office_m,
+      is_within_geofence: item.is_within_geofence,
+      office_id: item.office_id,
+      verification_status: item.verification_status,
+      address_label: item.address_label,
+      note: item.note,
+      photo_captured_at: item.photo_captured_at,
+      photo_url: item.photo_url,
+    };
+  });
 }
 
 // =====================================================
@@ -121,7 +224,6 @@ export interface AttendanceLocationPayload {
   longitude: number;
   accuracy: number;
   timestamp: string;
-  workLocationId: string;
 }
 
 export async function submitAttendance(
@@ -145,7 +247,6 @@ export async function submitAttendance(
   formData.append('longitude', String(location.longitude));
   formData.append('accuracy', String(location.accuracy));
   formData.append('timestamp', location.timestamp);
-  formData.append('workLocationId', location.workLocationId);
   formData.append('photo', photo, 'selfie.jpg');
 
   const response = await fetch(`${apiUrl}/api/attendance/${type}`, {
@@ -158,6 +259,13 @@ export async function submitAttendance(
 
   const result: unknown = await response.json().catch(() => null);
   if (!response.ok) {
+    if (response.status === 401) {
+      const { error: signOutError } = await supabase.auth.signOut();
+      if (signOutError) {
+        throw new Error(`Sesi login tidak valid dan gagal diakhiri: ${signOutError.message}`);
+      }
+      throw new Error('Sesi login tidak valid. Silakan masuk kembali.');
+    }
     const message =
       result && typeof result === 'object' && 'message' in result &&
       typeof result.message === 'string'
@@ -171,26 +279,42 @@ export async function submitAttendance(
     typeof result !== 'object' ||
     !('id' in result) ||
     typeof result.id !== 'string' ||
+    !('employee_id' in result) ||
+    typeof result.employee_id !== 'string' ||
+    result.employee_id !== data.session?.user.id ||
+    !('type' in result) ||
+    result.type !== (type === 'check-in' ? 'check_in' : 'check_out') ||
+    !('attendance_date' in result) ||
+    typeof result.attendance_date !== 'string' ||
+    !isValidAttendanceDate(result.attendance_date) ||
     !('checked_at' in result) ||
     typeof result.checked_at !== 'string' ||
+    !isValidTimestamp(result.checked_at) ||
     !('photo_captured_at' in result) ||
     typeof result.photo_captured_at !== 'string' ||
+    !isValidTimestamp(result.photo_captured_at) ||
     !('latitude' in result) ||
     typeof result.latitude !== 'number' ||
     !Number.isFinite(result.latitude) ||
+    result.latitude < -90 ||
+    result.latitude > 90 ||
     !('longitude' in result) ||
     typeof result.longitude !== 'number' ||
     !Number.isFinite(result.longitude) ||
+    result.longitude < -180 ||
+    result.longitude > 180 ||
     !('gps_accuracy_m' in result) ||
     typeof result.gps_accuracy_m !== 'number' ||
     !Number.isFinite(result.gps_accuracy_m) ||
+    result.gps_accuracy_m <= 0 ||
     !('distance_to_office_m' in result) ||
-    typeof result.distance_to_office_m !== 'number' ||
-    !Number.isFinite(result.distance_to_office_m) ||
+    (result.distance_to_office_m !== null &&
+      (typeof result.distance_to_office_m !== 'number' ||
+        !Number.isFinite(result.distance_to_office_m))) ||
     !('is_within_geofence' in result) ||
-    result.is_within_geofence !== true ||
+    (result.is_within_geofence !== null && typeof result.is_within_geofence !== 'boolean') ||
     !('office_id' in result) ||
-    result.office_id !== location.workLocationId ||
+    (result.office_id !== null && typeof result.office_id !== 'string') ||
     !('verification_status' in result) ||
     result.verification_status !== 'verified'
   ) {
@@ -218,6 +342,13 @@ export async function getAdminAttendancePhotos(limit = 50): Promise<AttendancePh
   );
   const result: unknown = await response.json().catch(() => null);
   if (!response.ok) {
+    if (response.status === 401) {
+      const { error: signOutError } = await supabase.auth.signOut();
+      if (signOutError) {
+        throw new Error(`Sesi login tidak valid dan gagal diakhiri: ${signOutError.message}`);
+      }
+      throw new Error('Sesi login tidak valid. Silakan masuk kembali.');
+    }
     const message =
       result && typeof result === 'object' && 'message' in result &&
       typeof result.message === 'string'

@@ -14,6 +14,8 @@ export interface AttendanceRecord {
   checkOut?: string;
   checkInLocation?: string;
   checkOutLocation?: string;
+  checkInPhotoUrl?: string;
+  checkOutPhotoUrl?: string;
   duration?: string;
   status: 'tepat_waktu' | 'terlambat' | 'izin_sakit' | 'wfo' | 'alpha';
   statusLabel: string;
@@ -27,7 +29,8 @@ export interface AttendanceRecord {
   coordinates?: {
     lat: number;
     lng: number;
-    distanceMeters: number;
+    distanceMeters: number | null;
+    accuracyMeters?: number;
   };
 }
 

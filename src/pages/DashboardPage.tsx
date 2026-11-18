@@ -141,9 +141,9 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
               {/* Large Hero Clock-In Button */}
               <button
                 onClick={() => onOpenBiometric('masuk')}
-                disabled={attendanceStatus === 'clocked_in'}
+                disabled={attendanceStatus !== 'not_clocked_in'}
                 className={`group relative overflow-hidden flex items-center justify-between p-3.5 rounded-2xl transition-all duration-200 active:scale-[0.98] ${
-                  attendanceStatus === 'clocked_in'
+                  attendanceStatus !== 'not_clocked_in'
                     ? 'bg-[#1e2238]/80 text-[#8e93b2] cursor-not-allowed opacity-75'
                     : 'bg-[#161a33] text-tertiary-fixed shadow-lg hover:shadow-xl hover:bg-[#1f2444]'
                 }`}
@@ -151,7 +151,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                 <div className="flex items-center gap-3 text-left">
                   <div
                     className={`w-10 h-10 rounded-full flex items-center justify-center transition-transform ${
-                      attendanceStatus === 'clocked_in'
+                      attendanceStatus !== 'not_clocked_in'
                         ? 'bg-[#2b3050] text-[#8e93b2]'
                         : 'bg-tertiary-fixed text-on-tertiary-fixed group-hover:scale-105'
                     }`}
@@ -160,16 +160,22 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                   </div>
                   <div className="flex flex-col">
                     <span className="text-sm font-bold leading-none tracking-tight">
-                      {attendanceStatus === 'clocked_in' ? 'SUDAH MASUK' : 'ABSEN MASUK'}
+                      {attendanceStatus === 'clocked_in'
+                        ? 'SUDAH MASUK'
+                        : attendanceStatus === 'clocked_out'
+                        ? 'PRESENSI SELESAI'
+                        : 'ABSEN MASUK'}
                     </span>
                     <span className="text-[11px] text-white/70 mt-1">
                       {attendanceStatus === 'clocked_in'
                         ? `Tercatat: ${checkInTime || '08:48 WIB'}`
+                        : attendanceStatus === 'clocked_out'
+                        ? `Tercatat: ${checkInTime || 'Check-in'}`
                         : 'Jadwal: 09:00 WIB'}
                     </span>
                   </div>
                 </div>
-                {attendanceStatus === 'clocked_in' ? (
+                {attendanceStatus !== 'not_clocked_in' ? (
                   <CheckCircle2 className="w-5 h-5 text-tertiary-fixed" />
                 ) : (
                   <ChevronRight className="w-6 h-6 text-tertiary-fixed group-hover:translate-x-1 transition-transform" />
@@ -197,6 +203,8 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                     <span className="text-[11px] text-white/70 mt-1">
                       {attendanceStatus === 'clocked_in'
                         ? 'Klik untuk presensi pulang'
+                        : attendanceStatus === 'clocked_out'
+                        ? `Tercatat: ${checkOutTime || 'Check-out'}`
                         : 'Buka Pukul 18:00 WIB'}
                     </span>
                   </div>
@@ -252,7 +260,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
 
           <div className="flex items-center justify-between pt-1">
             <span className="text-[11px] text-on-surface-variant truncate max-w-[150px]">
-              Lokasi kantor dimuat saat verifikasi
+              Lokasi GPS dicatat saat presensi
             </span>
             <button
               onClick={() => onNavigate('verification-gps')}
@@ -271,12 +279,16 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
           <h2 className="text-sm font-bold text-on-surface">Ringkasan Hari Ini</h2>
           <span
             className={`text-xs px-2.5 py-0.5 rounded-full font-semibold ${
-              attendanceStatus === 'clocked_in'
+            attendanceStatus !== 'not_clocked_in'
                 ? 'bg-tertiary-fixed text-on-tertiary-fixed'
                 : 'bg-surface-container-high text-on-surface-variant'
             }`}
           >
-            {attendanceStatus === 'clocked_in' ? 'Tepat Waktu' : 'Belum Absen'}
+            {attendanceStatus === 'clocked_in'
+              ? 'Sedang Bekerja'
+              : attendanceStatus === 'clocked_out'
+              ? 'Presensi Selesai'
+              : 'Belum Absen'}
           </span>
         </div>
 

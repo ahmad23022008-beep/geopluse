@@ -13,7 +13,7 @@ export const attendancePayloadSchema = z.object({
   longitude: z.number().finite().min(-180).max(180),
   accuracy: z.number().finite().positive(),
   timestamp: z.string().datetime({ offset: true }),
-  workLocationId: z.string().uuid(),
+  workLocationId: z.string().uuid().optional(), // Legacy field; never used to gate attendance.
 }).strict();
 
 export type AttendancePayload = z.infer<typeof attendancePayloadSchema>;
@@ -149,6 +149,7 @@ export async function getActiveWorkLocation(
     return {
       id: office.id,
       name: office.name,
+      address: office.address,
       latitude: office.latitude,
       longitude: office.longitude,
       radiusMeters: office.radius_m,
@@ -186,29 +187,6 @@ export async function createAttendance(
       `);
 
       await requireActiveEmployee(transaction, userId);
-
-      const activeOffices = await transaction.offices.findMany({ where: { is_active: true } });
-      if (activeOffices.length === 0) {
-        throw new ApiError(404, 'active_office_not_found', 'No active work location is configured.');
-      }
-      if (activeOffices.length > 1) {
-        throw new ApiError(409, 'ambiguous_active_office', 'More than one active work location is configured.');
-      }
-      const office = activeOffices[0];
-      if (!office || office.id !== payload.workLocationId) {
-        throw new ApiError(404, 'active_office_not_found', 'The requested work location is not active.');
-      }
-      ensureOfficeCoordinates(office);
-
-      const distanceMeters = calculateDistanceMeters(
-        payload.latitude,
-        payload.longitude,
-        office.latitude,
-        office.longitude
-      );
-      if (distanceMeters > office.radius_m) {
-        throw new ApiError(422, 'outside_geofence', 'Outside Authorized Area.');
-      }
 
       const todayRows = await transaction.attendance.findMany({
         where: { employee_id: userId, attendance_date: attendanceDate },
@@ -270,9 +248,9 @@ export async function createAttendance(
           latitude: payload.latitude,
           longitude: payload.longitude,
           gps_accuracy_m: payload.accuracy,
-          distance_to_office_m: distanceMeters,
-          is_within_geofence: true,
-          office_id: office.id,
+          distance_to_office_m: null,
+          is_within_geofence: null,
+          office_id: null,
           verification_status: verification_status.verified,
           photo_path: photo.path,
           photo_captured_at: photo.capturedAt,
@@ -321,6 +299,6 @@ export async function getAttendanceHistory(
       orderBy: [{ attendance_date: 'desc' }, { checked_at: 'desc' }],
       take: limit,
     });
-    return records.map(serializeAttendance);
+    return records;
   });
 }
